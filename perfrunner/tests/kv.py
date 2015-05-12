@@ -493,3 +493,81 @@ class PathoGenFrozenTest(PathoGenTest):
                      num_iterations=self.test_config.load_settings.iterations,
                      frozen_mode=True,
                      host=host, port=port, bucket=target.bucket).run()
+
+
+class KVProjectorTest(KVTest):
+    """
+    This test measures the impact of projector on KV workload.
+
+    Starting with a basic KV workload, it enables 2i before the access phase.
+
+    This is usually not run directly. Run either the ProjectorMixedLatencyTest
+    or ProjectorReadLatencyTest instead since they post results.
+    """
+
+    def run(self):
+        self.load()
+        self.wait_for_persistence()
+        self.compact_bucket()
+
+        # build initial index. Copied from SecondaryIndexTest
+        logger.info('building secondary index..')
+        indexname = self.test_config.secondaryindex_settings.name
+        field = self.test_config.secondaryindex_settings.field
+        # get indexnode
+        for name, servers in self.cluster_spec.yield_servers_by_role('index'):
+            if not servers:
+                raise Exception('No index servers specified for cluster \"{}\",'
+                                ' cannot create indexes'.format(name))
+            self.indexnode = servers[0]
+        # build index
+        idx = self.remote.build_secondary_index(
+            self.indexnode, indexname, field)
+        if idx:
+            logger.info('command status {}'.format(idx))
+        else:
+            logger.warning('No status returned by build_secondary_index')
+
+        # Wait for index build
+        rest_username, rest_password = self.cluster_spec.rest_credentials
+        time_elapsed = self.rest.wait_for_secindex_init_build(
+            self.indexnode.split(':')[0],rest_username, rest_password)
+
+        # access phase as in regular KV test
+        self.hot_load()
+        self.workload = self.test_config.access_settings
+        self.access_bg()
+
+        logger.info('Kicking off access phase')
+        self.access()
+
+
+class ProjectorMixedLatencyTest(KVProjectorTest):
+
+    COLLECTORS = {'latency': True}
+
+    def run(self):
+        super(ProjectorMixedLatencyTest, self).run()
+        if self.test_config.stats_settings.enabled:
+            for operation in ('get', 'set'):
+                self.reporter.post_to_sf(
+                    *self.metric_helper.calc_kv_latency(operation=operation,
+                                                        percentile=95)
+                )
+
+
+class ProjectorReadLatencyTest(KVProjectorTest):
+
+    COLLECTORS = {'latency': True}
+
+    def run(self):
+        super(ProjectorReadLatencyTest, self).run()
+        if self.test_config.stats_settings.enabled:
+            latency_get = self.reporter.post_to_sf(
+                *self.metric_helper.calc_kv_latency(operation='get',
+                                                    percentile=95)
+            )
+            if hasattr(self, 'experiment'):
+                self.experiment.post_results(latency_get)
+
+

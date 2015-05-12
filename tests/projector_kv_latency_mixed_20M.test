@@ -1,0 +1,30 @@
+[test_case]
+test = perfrunner.tests.kv.ProjectorMixedLatencyTest
+title = latency (ms), mixed, 1 bucket x 20M x 2KB, non-DGM, 10K ops/sec, incremental 2i
+summary = Mixed KV test, 4 nodes, 1 bucket x 20M x 2KB, non-DGM, 10K ops/sec
+larger_is_better = false
+
+[cluster]
+mem_quota = 40960
+initial_nodes = 4
+num_buckets = 1
+
+[load]
+items = 20000000
+size = 2048
+workers = 20
+
+[secondary]
+name = projector_20M
+field = email
+
+[access]
+creates = 1
+reads = 50
+updates = 48
+deletes = 1
+throughput = 10000
+items = 20000000
+size = 2048
+workers = 24
+time = 3600
