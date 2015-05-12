@@ -38,5 +38,5 @@ items = 1000000
 size = 2048
 working_set = 20
 working_set_access = 95
-time = 5400
+time = 120
 async = 1

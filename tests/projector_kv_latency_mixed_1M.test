@@ -27,4 +27,4 @@ throughput = 10000
 items = 1000000
 size = 2048
 workers = 24
-time = 3600
+time = 120
