@@ -1,7 +1,7 @@
 import time
 
 from decorator import decorator
-
+from logger import logger
 
 from perfrunner.helpers.cbmonitor import with_stats
 from perfrunner.helpers.misc import server_group
@@ -301,3 +301,49 @@ class RebalanceWithSymmetricXdcrTest(SymmetricXdcrTest, RebalanceTest):
         self.workload = self.test_config.access_settings
         self.access_bg()
         self.rebalance()
+
+
+class RebalanceKVProjectorTest(RebalanceTest):
+
+    """
+    Workflow definition for KV rebalance tests with 2i. Initial index finishes
+    building before access and rebalance are kicked off.
+    """
+
+    COLLECTORS = {'latency': True}
+
+    def run(self):
+        self.load()
+        self.wait_for_persistence()
+
+        self.compact_bucket()
+
+        # build initial index. Copied from SecondaryIndexTest
+        logger.info('building secondary index..')
+        indexname = self.test_config.secondaryindex_settings.name
+        field = self.test_config.secondaryindex_settings.field
+        # get indexnode
+        for name, servers in self.cluster_spec.yield_servers_by_role('index'):
+            if not servers:
+                raise Exception('No index servers specified for cluster \"{}\",'
+                                ' cannot create indexes'.format(name))
+            self.indexnode = servers[0]
+        # build index
+        idx = self.remote.build_secondary_index(
+            self.indexnode, indexname, field)
+        if idx:
+            logger.info('command status {}'.format(idx))
+        else:
+            logger.warning('No status returned by build_secondary_index')
+
+        # Wait for index build
+        rest_username, rest_password = self.cluster_spec.rest_credentials
+        time_elapsed = self.rest.wait_for_secindex_init_build(
+            self.indexnode.split(':')[0],rest_username, rest_password)
+
+        self.hot_load()
+
+        self.workload = self.test_config.access_settings
+        self.access_bg()
+        self.rebalance()
+

@@ -1,0 +1,45 @@
+[test_case]
+test = perfrunner.tests.rebalance.RebalanceKVProjectorTest
+title = Rebalance-in (min), 3 -> 4, 1 bucket x 20M x 2KB, DGM, 10K ops/sec
+summary = Mixed rebalance test, 3 -> 4 nodes, 1 bucket x 20M x 2KB, 10K ops/sec
+larger_is_better = false
+
+[cluster]
+mem_quota = 40960
+initial_nodes = 3
+num_buckets = 1
+
+[compaction]
+db_percentage = 10
+
+[load]
+items = 20000000
+size = 2048
+workers = 20
+
+[secondary]
+name = projector_rebalance_20M
+field = email
+
+[hot_load]
+items = 20000000
+size = 2048
+workers = 20
+working_set = 5
+
+[access]
+creates = 5
+reads = 50
+updates = 40
+deletes = 5
+throughput = 10000
+items = 20000000
+size = 2048
+workers = 24
+working_set = 5
+working_set_access = 98
+
+[rebalance]
+nodes_after = 4
+start_after = 300
+stop_after = 300
