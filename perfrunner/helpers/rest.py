@@ -2,6 +2,7 @@ import json
 import time
 import urllib2
 import base64
+import traceback
 from collections import namedtuple
 
 import requests
@@ -435,12 +436,40 @@ class RestHelper(object):
         request.add_header("Authorization", "Basic %s" % base64string)
 
         while True:
-            time.sleep(1)
-            response = urllib2.urlopen(request)
-            data = str(response.read())
-            json2i = json.loads(data)
-            status = json2i["status"][0]["status"]
-            if(status == 'Ready'):
+            done = False
+            def get_status():
+                response = urllib2.urlopen(request)
+                data = str(response.read())
+                json2i = json.loads(data)
+                status = json2i["status"][0]["status"]
+                # while loop is done if we see "Ready"
+                if status and status == "Ready":
+                    return True
+                return False
+
+            max_retry = 10
+            for i in xrange(1, max_retry + 1):
+                try:
+                    time.sleep(1)
+                    done = get_status()
+                    # no exceptions, resume while loop by breaking for loop.
+                    break
+                except KeyError as e:
+                    # known exception
+                    if i < max_retry:
+                        logger.info(
+                            "Retrying REST getIndexStatus. #{}".format(i))
+                except Exception as e:
+                    # unexpected exception
+                    logger.debug(traceback.format_exc())
+                finally:
+                    if i == max_retry:
+                        logger.error(
+                            "Exceeded max retry for REST getIndexStatus.")
+                        raise
+
+            # while loop normal exit condition
+            if done:
                 break
 
         finish_ts = time.time()
