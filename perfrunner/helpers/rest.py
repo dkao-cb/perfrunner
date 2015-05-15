@@ -2,6 +2,7 @@ import json
 import time
 import urllib2
 import base64
+import traceback
 from collections import namedtuple
 
 import requests
@@ -79,6 +80,13 @@ class RestHelper(object):
 
         api = 'http://{}/pools/default'.format(host_port)
         data = {'memoryQuota': mem_quota}
+        self.post(url=api, data=data)
+
+    def set_index_mem_quota(self, host_port, mem_quota):
+        logger.info('Configuring indexer memory quota: {} to {} MB'.format(host_port, mem_quota))
+
+        api = 'http://{}/pools/default'.format(host_port)
+        data = {'indexMemoryQuota': mem_quota}
         self.post(url=api, data=data)
 
     def set_services(self, host_port, services):
@@ -188,8 +196,8 @@ class RestHelper(object):
         return self.get(url=api).json()
 
     def get_goxdcr_stats(self, host_port, bucket):
-        api = 'http://{}/pools/default/buckets/@goxdcr-{}/stats'.format(host_port,
-                                                                        bucket)
+        api = 'http://{}/pools/default/buckets/@xdcr-{}/stats'.format(host_port,
+                                                                      bucket)
         return self.get(url=api).json()
 
     def add_remote_cluster(self, host_port, remote_host_port, name,
@@ -428,12 +436,40 @@ class RestHelper(object):
         request.add_header("Authorization", "Basic %s" % base64string)
 
         while True:
-            time.sleep(1)
-            response = urllib2.urlopen(request)
-            data = str(response.read())
-            json2i = json.loads(data)
-            status = json2i["status"][0]["status"]
-            if(status == 'Ready'):
+            done = False
+            def get_status():
+                response = urllib2.urlopen(request)
+                data = str(response.read())
+                json2i = json.loads(data)
+                status = json2i["status"][0]["status"]
+                # while loop is done if we see "Ready"
+                if status and status == "Ready":
+                    return True
+                return False
+
+            max_retry = 10
+            for i in xrange(1, max_retry + 1):
+                try:
+                    time.sleep(1)
+                    done = get_status()
+                except KeyError:
+                    # known exception
+                    if i < max_retry:
+                        logger.info(
+                            "Retrying REST getIndexStatus. #{}".format(i))
+                except Exception:
+                    # unexpected exception
+                    logger.debug(traceback.format_exc())
+                else:
+                    # no exceptions, resume while loop by breaking for loop.
+                    # This skips the following max_retry check.
+                    break
+                if i == max_retry:
+                    raise RuntimeError(
+                        "Exceeded max retry for REST getIndexStatus.")
+
+            # while loop normal exit condition
+            if done:
                 break
 
         finish_ts = time.time()
