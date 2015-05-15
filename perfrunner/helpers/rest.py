@@ -452,21 +452,21 @@ class RestHelper(object):
                 try:
                     time.sleep(1)
                     done = get_status()
-                    # no exceptions, resume while loop by breaking for loop.
-                    break
-                except KeyError as e:
+                except KeyError:
                     # known exception
                     if i < max_retry:
                         logger.info(
                             "Retrying REST getIndexStatus. #{}".format(i))
-                except Exception as e:
+                except Exception:
                     # unexpected exception
                     logger.debug(traceback.format_exc())
-                finally:
-                    if i == max_retry:
-                        logger.error(
-                            "Exceeded max retry for REST getIndexStatus.")
-                        raise
+                else:
+                    # no exceptions, resume while loop by breaking for loop.
+                    # This skips the following max_retry check.
+                    break
+                if i == max_retry:
+                    raise RuntimeError(
+                        "Exceeded max retry for REST getIndexStatus.")
 
             # while loop normal exit condition
             if done:
