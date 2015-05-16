@@ -447,7 +447,7 @@ class RestHelper(object):
                     return True
                 return False
 
-            max_retry = 10
+            max_retry = 1000
             for i in xrange(1, max_retry + 1):
                 try:
                     time.sleep(1)
