@@ -435,10 +435,11 @@ class RestHelper(object):
         base64string = base64.encodestring('%s:%s' % (rest_username, rest_password)).replace('\n', '')
         request.add_header("Authorization", "Basic %s" % base64string)
 
+        logger.info("Polling for getIndexStatus")
         while True:
             done = False
             def get_status():
-                response = urllib2.urlopen(request)
+                response = urllib2.urlopen(request, timeout=60)
                 data = str(response.read())
                 json2i = json.loads(data)
                 status = json2i["status"][0]["status"]
@@ -447,11 +448,14 @@ class RestHelper(object):
                     return True
                 return False
 
-            max_retry = 1000
+            max_retry = 10
             for i in xrange(1, max_retry + 1):
                 try:
                     time.sleep(1)
+                    rest_start = time.time()
                     done = get_status()
+                    rest_end = time.time()
+                    rest_elapsed = round(rest_end - rest_start)
                 except KeyError:
                     # known exception
                     if i < max_retry:
@@ -470,6 +474,9 @@ class RestHelper(object):
 
             # while loop normal exit condition
             if done:
+                logger.info(
+                    "Successful REST getIndexStatus took {} seconds".format(
+                        rest_elapsed))
                 break
 
         finish_ts = time.time()
