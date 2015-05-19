@@ -1,12 +1,12 @@
 [test_case]
-test = perfrunner.tests.n1ql.N1QLTest
-title = N1QL Q2 1Bux20Mx1K, Singleton Unique Lookup, 38.4KGops, 9.6KSops, 48KQops, View, stale=ok
+test = perfrunner.tests.rebalance.RebalanceN1QLTest
+title = N1QL Q2 1Bux1Mx1K, Singleton Unique Lookup, 38.4KGops, 9.6KSops, 48KQops, View, stale=ok, rebalance
 summary = Singleton Unique Lookup, 38.4KGops, 9.6KSops, 48KQops
 larger_is_better = false
 
 [cluster]
 mem_quota = 20480
-initial_nodes = 6
+initial_nodes = 4
 num_buckets = 1
 
 [bucket]
@@ -15,7 +15,7 @@ password =
 eviction_policy = valueOnly
 
 [load]
-items = 20000000
+items = 1000000
 size = 1024
 workers = 20
 doc_gen = new
@@ -30,10 +30,10 @@ reads = 80
 updates = 20
 deletes = 0
 throughput = 48000
-items = 20000000
+items = 1000000
 size = 1024
 workers = 24
-time = 1200
+time = 600
 doc_gen = new
 n1ql_queries =
     SELECT * FROM `{bucket}` WHERE email.f.f = "{email[f][f]}";
@@ -41,3 +41,7 @@ n1ql_throughput = 48000
 n1ql_workers = 48
 n1ql_stale = ok
 
+[rebalance]
+nodes_after = 3
+start_after = 60
+stop_after = 300
