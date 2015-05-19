@@ -2,13 +2,13 @@ import time
 
 from decorator import decorator
 
-
 from perfrunner.helpers.cbmonitor import with_stats
 from perfrunner.helpers.misc import server_group
 from perfrunner.tests import PerfTest
 from perfrunner.tests.index import IndexTest
 from perfrunner.tests.query import QueryTest
 from perfrunner.tests.xdcr import XdcrTest, SymmetricXdcrTest
+from perfrunner.tests import n1ql
 
 
 @decorator
@@ -301,3 +301,25 @@ class RebalanceWithSymmetricXdcrTest(SymmetricXdcrTest, RebalanceTest):
         self.workload = self.test_config.access_settings
         self.access_bg()
         self.rebalance()
+
+
+class RebalanceN1QLTest(n1ql.N1QLTest, RebalanceTest):
+    """
+    N1QL test with rebalance.
+    """
+    def run(self):
+        self.load()
+        self.wait_for_persistence()
+        self.compact_bucket()
+
+        self.build_index()
+
+        self.workload = self.test_config.access_settings
+        self.access_bg()
+        self.rebalance()
+
+        if self.test_config.stats_settings.enabled:
+            self.reporter.post_to_sf(
+                *self.metric_helper.calc_query_latency(percentile=80)
+            )
+
