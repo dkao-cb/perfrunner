@@ -33,7 +33,7 @@ throughput = 48000
 items = 20000000
 size = 1024
 workers = 24
-time = 3600
+time = 5400
 doc_gen = new
 n1ql_queries =
     SELECT * FROM `{bucket}` WHERE email.f.f = "{email[f][f]}";
@@ -43,5 +43,5 @@ n1ql_stale = ok
 
 [rebalance]
 nodes_after = 3
-start_after = 1200
-stop_after = 1200
+start_after = 600
+stop_after = 600
