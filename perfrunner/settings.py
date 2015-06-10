@@ -558,9 +558,15 @@ class SecondaryIndexSettings(PhaseSettings):
 
     def __init__(self, options):
         self.name = str(options.get('name', self.NAME))
-        self.field = str(options.get('field', self.FIELD))
         self.db = str(options.get('db', self.DB))
         self.stale = str(options.get('stale', self.STALE))
+        self.field = str(options.get('field', self.FIELD))
+        for field in self.field.split(","):
+            index_partition_name = "index_{}_partitions".format(field)
+            val = str(options.get(index_partition_name, None))
+            if val:
+                setattr(self, index_partition_name, val)
+
 
 
 class N1QLSettings(PhaseSettings):

@@ -1,0 +1,32 @@
+[test_case]
+test = perfrunner.tests.secondary.MultipleIndexerTest
+title = 1 bucket x 20M x 2KB,single 2i index, no mutations during initial build only
+summary = Multiple Indexer test, 3 KV nodes, 2 2i node 1 bucket x 20M x 2KB
+larger_is_better = false
+
+[cluster]
+mem_quota = 30000
+initial_nodes = 5
+num_buckets = 1
+
+[compaction]
+db_percentage = 100
+view_percentage = 100
+
+[load]
+items = 20000000
+size = 2048
+workers = 20
+
+[secondary]
+name = myindex1
+field = email
+index_email_partitions=7fffff
+index_city_partitions=3fffff
+
+[access]
+creates = 100
+ops = 20000000
+items = 20000000
+size = 2048
+workers = 20

@@ -115,6 +115,46 @@ class RemoteLinuxHelper(object):
         return self.ARCH[arch]
 
     @single_host
+    def defer_create_secondary_index(self, host_port, bucket, index, fields,
+            using=None, extra=None):
+        cmd = "/opt/couchbase/bin/cbindex"
+        cmd += ' -auth=Administrator:password'
+        cmd += ' -server {}'.format(host_port)
+        cmd += ' -type create -bucket {}'.format(bucket)
+        cmd += ' -index {} -fields={}'.format(index, fields)
+
+        # The .format() method is sensitive to {}
+        with_str_template = r'{\\\"defer_build\\\":true, \\\"nodes\\\":[\\\"%s\\\"]}'
+        with_str = with_str_template % host_port
+        cmd += ' -with=\\\"{}\\\"'.format(with_str)
+        if using:
+            cmd += ' -using {}'.format(using)
+        if extra:
+            cmd += ' {}'.format(extra)
+
+        logger.info('submitting deferred cbindex create command {}'.format(cmd))
+        status = run(cmd, shell_escape=False, pty=False)
+        if status:
+            logger.info('cbindex create status {}'.format(status))
+
+    @single_host
+    def cbindex_build_index(self, host_port, bucket_indexes):
+        """
+        bucket_indexes should be a Python list that looks like:
+        [ bucket-1:index1,
+          bucket-2:index2 ]
+        """
+        cmdstr = '/opt/couchbase/bin/cbindex -auth="Administrator:password"'
+        cmdstr += ' -server {}'.format(host_port)
+        cmdstr += ' -type build'
+        cmdstr += ' -indexes {}'.format(",".join(bucket_indexes))
+
+        logger.info('cbindex build command {}'.format(cmdstr))
+        status = run(cmdstr, shell_escape=False, pty=False)
+        if status:
+            logger.info('cbindex build command status {}'.format(status))
+
+    @single_host
     def build_secondary_index(self, host_port, bucket, indexes, fields, secondarydb):
         logger.info('building secondary indexes')
         usingdb = ''

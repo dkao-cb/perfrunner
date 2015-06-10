@@ -281,3 +281,160 @@ class SecondaryIndexingLatencyTest(SecondaryIndexTest):
 
         if self.test_config.stats_settings.enabled:
             self.reporter.post_to_sf(indexing_latency_percentile_80)
+
+class MultipleIndexerTest(PerfTest):
+    """
+    For a given (one) cluster, partition all desired indexes for one bucket
+    across multiple indexer nodes.
+
+    Measure initial index build time.
+
+    """
+
+    COLLECTORS = {'secondary_stats': True}
+
+    def __init__(self, *args):
+        super(MultipleIndexerTest, self).__init__(*args)
+
+        self.secondaryDB = None
+        if self.test_config.secondaryindex_settings.db == 'memdb':
+            self.secondaryDB = 'memdb'
+        logger.info('secondary storage DB is {}'.format(self.secondaryDB))
+
+        # Get first cluster, its index nodes, and first bucket
+        (cluster_name, servers) = \
+                self.cluster_spec.yield_servers_by_role('index').next()
+        self.index_nodes = servers
+        if not self.index_nodes:
+            raise RuntimeError(
+                "No index nodes specified for cluster {}".format(cluster_name))
+        self.bucket = self.test_config.buckets[0]
+
+        self.index_names = self.test_config.secondaryindex_settings.name.split(',')
+        # Not used in this file but defined by imitating after
+        # SecondaryIndexTest
+        self.indexes = self.index_names
+
+        self.index_fields = self.test_config.secondaryindex_settings.field.split(",")
+
+    def get_index_partition_mapping(self):
+        """
+        Given:
+
+        [secondary]
+        name = myindex1,myindex2
+        field = email,city
+        index_email_partitions=7fffff
+        index_city_partitions=3fffff,7fffff,bffffff
+
+        Returns a list of dictionaries that look like
+        """
+        result = []
+        # For each index/field, get the partition pivots in a friendly format.
+        # Start with the (index_name, field) pair, find each field's
+        # corresponding partition pivots. From the pivots, generate the (low,
+        # high) endpoints that define a partition. Use None to represent
+        # unbounded.
+        for index_name, field in zip(self.index_names, self.index_fields):
+            index_partition_name = "index_{}_partitions".format(field)
+            # check that secondaryindex_settings.index_blah_partitions exists.
+            if not hasattr(self.test_config.secondaryindex_settings,
+                    index_partition_name):
+                raise RuntimeError("Missing partition list for {}".format(
+                    index_name))
+            pivots = getattr(self.test_config.secondaryindex_settings,
+                    index_partition_name).split(",")
+            pivots = [None] + pivots + [None]
+            partitions = []
+            for i in xrange(len(pivots)-1):
+                partitions.append((pivots[i], pivots[i+1]))
+            if len(partitions) != len(self.index_nodes):
+                raise RuntimeError(
+                        "Number of pivots in partitions should be one less" +
+                        " than number of index nodes")
+            # assign each partition to each node
+            node_partitions = zip(self.index_nodes, partitions)
+            result.append({
+                "index_name":index_name,
+                "field":field,
+                "node_partitions":node_partitions
+                })
+        return result
+
+    @with_stats
+    def build_secondaryindex(self):
+        """
+        Create and build index. No wait.
+
+        Caller gets the @with_stats timing as return value.
+        It's a tuple of from_ts, to_ts
+        """
+        # This stores the bucket:index pair for each index host_port
+        build_data = OrderedDict()
+
+        # Create corresponding partitioned key range of an index for a bucket
+        # on the corresponding host_port
+        for d in self.get_index_partition_mapping():
+            index_name = d['index_name']
+            field = d['field']
+            node_partitions = d['node_partitions']
+            for i, (host_port, (left, right)) in enumerate(node_partitions):
+                # construct where clause
+                where = None
+                where_clause=None
+                if left and right:
+                    where = '\\\"{}\\\" >= {} and {} < \\\"{}\\\"'.format(
+                            left,field,field,right)
+                elif left:
+                    where = '{} >= \\\"{}\\\"'.format(field, left)
+                elif right:
+                    where = '{} < \\\"{}\\\"'.format(field, right)
+                if where:
+                    where_clause = "-where='{}'".format(where)
+
+                #add suffixes to index names or else they collide globally
+                c_index_name = index_name + "_{}".format(i)
+                self.remote.defer_create_secondary_index(
+                        host_port,
+                        self.bucket,
+                        c_index_name,
+                        field,
+                        using=self.secondaryDB,
+                        extra=where_clause)
+
+                # Remember the deferred created index to call build on later
+                bucket_index = "{}:{}".format(self.bucket, c_index_name)
+                if host_port not in build_data:
+                    build_data[host_port] = []
+                build_data[host_port].append(bucket_index)
+
+        time.sleep(10)
+
+        # Call build on all the indexes created above
+        # Execute on any host_port would do.
+        all_bucket_indexes = []
+        for (host_port, bucket_indexes) in build_data.iteritems():
+            all_bucket_indexes.extend(bucket_indexes)
+        self.remote.cbindex_build_index(self.index_nodes[0], all_bucket_indexes)
+
+        # Wait for index build and return elapsed time.
+        rest_username, rest_password = self.cluster_spec.rest_credentials
+        time_elapsed = self.rest.wait_for_secindex_init_build(
+                self.index_nodes[0].split(':')[0], self.index_names,
+                rest_username, rest_password)
+
+        #return value hijacked and discarded by @with_stats
+        #return time_elapsed
+
+    def run(self):
+        self.load()
+        self.wait_for_persistence()
+        self.compact_bucket()
+
+        from_ts, to_ts = self.build_secondaryindex()
+        time_elapsed = (to_ts - from_ts) / 1000.0
+        time_elapsed = self.reporter.finish('Initial secondary index', time_elapsed)
+        self.reporter.post_to_sf(
+            *self.metric_helper.get_indexing_meta(value=time_elapsed,
+                                                  index_type='Initial')
+        )
