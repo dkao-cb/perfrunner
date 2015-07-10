@@ -4,6 +4,7 @@ import base64
 import json
 import subprocess
 import numpy as np
+import os
 import pdb
 
 from logger import logger
@@ -79,6 +80,7 @@ class SecondaryIndexTest(PerfTest):
                 for i in xrange(num_partitions):
                     index_i = index + "_{}".format(i)
                     self.active_indexes.append(index_i)
+        self.num_partitions = num_partitions
 
     def _get_where_map(self):
         """
@@ -281,65 +283,208 @@ class InitialandIncrementalSecondaryIndexRebalanceTest(InitialandIncrementalSeco
         )
 
 
-class SecondaryIndexingThroughputTest(SecondaryIndexTest):
+class _ScanWorkload(object):
+
+    def get_specs(self, concurrency, clients, string_extras={},
+                  non_string_extras={}):
+        """
+        Returns a dictionary that can eventually become a json config file for
+        cbindexperf.
+
+        latency tests should pass in {"NInterval" : 100} for both string and
+        non-string type of specs.
+
+        Consistency tests should have {"Consistency" : True} in every scan spec
+        too.
+        """
+        result = {}
+        result["Concurrency"] = concurrency
+        result["Clients"] = clients
+
+        # used later to match the length of field with indexes
+        multiplier = 1
+        if self.num_partitions:
+            multiplier = self.num_partitions
+
+        # "string" type of fields gets a range scan.
+        field_types = []
+        for index_field in self.index_fields:
+            field_type = "non-string"
+            if index_field in ('name', 'email', 'alt_email', 'city', 'realm',
+                               'country', 'county', 'street'):
+                field_type = "string"
+            # a list of lists of fields belong to related indexes
+            # When one index is partitioned into multiple indexes, these _0, _1
+            # ... etc active indexes are "related"
+            field_types.append([field_type] * multiplier)
+
+        if len(self.active_indexes) != len(field_types) * multiplier:
+            raise RuntimeError(
+                "number of indexes do not match with "
+                "the number of field types")
+        related_indexes = [self.active_indexes[x:x + multiplier] for x in
+                           xrange(0, len(self.active_indexes), multiplier)]
+
+        # Find the left boundaries of the scan range
+        # boundaries may eventually look like
+        # [["0", "5fffff","afffff"],["0", "5fffff","afffff"]]
+        boundaries = []
+        for index_name, field in zip(self.indexes, self.index_fields):
+            # starting bound is always zero
+            bounds = ["0"]
+            boundaries.append(bounds)
+            index_partition_name = "index_{}_partitions".format(index_name)
+            # check that secondaryindex_settings.index_blah_partitions exists.
+            if not hasattr(self.test_config.secondaryindex_settings,
+                           index_partition_name):
+                continue
+            field_pivots = eval(
+                getattr(self.test_config.secondaryindex_settings,
+                index_partition_name))
+            pivots = field_pivots[field]
+            # One can still modify bounds after it is added to boundaries
+            bounds.extend(pivots)
+
+        # All information now available to generate scan specs
+        i = 0
+        scan_specs = []
+        for indexes, fields, bounds in zip(
+                related_indexes, field_types, boundaries):
+            for (index_name, field_type, bound) in zip(indexes, fields, bounds):
+                i += 1
+                if field_type == "string":
+                    left = int(bound, 16)
+                    # original low high were 0x15 and 0x28 which yields 21 and
+                    # 19 (= 0x28 - 0x15) in decimal.
+                    low  = "{:06x}".format(left + 21)
+                    high = "{:06x}".format(left + 21 + 19)
+                    spec = {
+                        "Type": "Range",
+                        "Limit": 1,
+                        "Repeat": 999999,
+                        "Bucket": "bucket-1",
+                        "Low": [low],
+                        "High": [high],
+                        "Id": i,
+                        "Inclusion": 3,
+                        "Index": index_name,
+                    }
+
+                    spec.update(string_extras)
+                else:
+                    spec = {
+                        "Type": "All",
+                        "Limit": 1,
+                        "Repeat": 99,
+                        "Bucket": "bucket-1",
+                        "Id": i,
+                        "Index": index_name,
+                    }
+                scan_specs.append(spec)
+        result["ScanSpecs"] = scan_specs
+        return result
+
+    def save_specs(self, specs,
+                   filename=time.strftime("/tmp/scan_%Y%m%d-%H%M%S.json"),
+                   suffix=""):
+        filename = filename + suffix
+        with open(filename, "w") as f:
+            json.dump(specs, f, indent=1, sort_keys=True)
+        return filename
+
+    def delete_spec(self, filename):
+        os.remove(filename)
+
+    @with_stats
+    def apply_scanworkload(self, configfiles):
+        rest_username, rest_password = self.cluster_spec.rest_credentials
+        logger.info('Initiating scan workload')
+
+        procs = []
+        for i, (config, result) in enumerate(configfiles):
+            # wrapped in a pair of unneeded parenthesis to silence flake8
+            cmdstr = (("ulimit -n 40960 ; ulimit -a ; cbindexperf{} -cluster {} -auth=\"{}:{}\" -configfile {}"
+                      " -resultfile {}").format(
+                      i,
+                      self.index_nodes[0], rest_username, rest_password,
+                      config, result))
+            logger.info("Running {}".format(cmdstr))
+            proc = subprocess.Popen(cmdstr, shell=True)
+            procs.append(proc)
+
+        done = [False for p in procs]
+        while not all(done):
+            for i, proc in enumerate(procs):
+                if done[i]:
+                    continue
+                status = proc.poll()
+                if status != None:
+                    logger.info("cbindexperf {} status {}".format(i, status))
+                    done[i] = True
+                    if status != 0:
+                        raise Exception('Scan workload could not be applied')
+            time.sleep(1)
+        logger.info('Scan workload applied')
+
+
+class SecondaryIndexingThroughputTest(SecondaryIndexTest, _ScanWorkload):
 
     """
     The test applies scan workload against the 2i server and measures
     and reports the average scan throughput
     """
-
-    @with_stats
-    def apply_scanworkload(self):
-        rest_username, rest_password = self.cluster_spec.rest_credentials
-        logger.info('Initiating scan workload')
-        numindexes = None
-        numindexes = len(self.indexes)
-
-        if self.test_config.secondaryindex_settings.stale == 'false':
-            if numindexes == 1:
-                self.configfile = 'scripts/config_scanthr_sessionconsistent.json'
-            elif numindexes == 5:
-                self.configfile = 'scripts/config_scanthr_sessionconsistent_multiple.json'
-        else:
-            if numindexes == 1:
-                self.configfile = 'scripts/config_scanthr.json'
-            elif numindexes == 5:
-                self.configfile = 'scripts/config_scanthr_multiple.json'
-
-        cmdstr = "cbindexperf -cluster {} -auth=\"{}:{}\" -configfile {} -resultfile result.json".format(self.index_nodes[0], rest_username, rest_password, self.configfile)
-        status = subprocess.call(cmdstr, shell=True)
-        if status != 0:
-            raise Exception('Scan workload could not be applied')
-        else:
-            logger.info('Scan workload applied')
-
     def read_scanresults(self):
-        with open('{}'.format(self.configfile)) as config_file:
-            configdata = json.load(config_file)
-        numscans = configdata['ScanSpecs'][0]['Repeat']
+        sum_scansps = 0
+        sum_rowps = 0
+        for configfile, result in self.configfiles:
+            with open('{}'.format(configfile)) as config_file:
+                configdata = json.load(config_file)
+                numscans = sum([spec['Repeat'] for spec in configdata['ScanSpecs']])
 
-        with open('result.json') as result_file:
-            resdata = json.load(result_file)
-        duration_s = (resdata['Duration'])
-        numRows = resdata['Rows']
-        """scans and rows per sec"""
-        scansps = numscans / duration_s
-        rowps = numRows / duration_s
-        return scansps, rowps
+            logger.info("Reading result.json\n" + open(result).read())
+            with open(result) as result_file:
+                resdata = json.load(result_file)
+            duration_s = (resdata['Duration'])
+            numRows = resdata['Rows']
+            """scans and rows per sec"""
+            scansps = numscans / duration_s
+            rowps = numRows / duration_s
+            logger.info("single cbindexperf scansps {}".format(scansps))
+            sum_scansps += scansps
+            sum_rowps += rowps
+        return sum_scansps, sum_rowps
 
     def run(self):
         self.load()
         self.wait_for_persistence()
         self.compact_bucket()
         from_ts, to_ts = self.build_secondaryindex()
+
+        # Generate json config file for cbindexperf
+        if self.test_config.secondaryindex_settings.stale == 'false':
+            specs = self.get_specs(concurrency=1000, clients=1,
+                                   string_extras={"Consistency":True},
+                                   non_string_extras={"Consistency":True})
+        else:
+            specs = self.get_specs(concurrency=1000,
+                                   clients=1)
+        NUM_CBINDEXPERFS = 2
+        self.configfiles = []
+        for i in xrange(1, NUM_CBINDEXPERFS + 1):
+            specs['Id'] = i
+            configfile = self.save_specs(specs, suffix="_{}".format(i))
+            logger.info("Generated json file:\n" + open(configfile).read())
+            self.configfiles.append((configfile, "result{}.json".format(i)))
+
         self.access_bg()
-        self.apply_scanworkload()
+        self.apply_scanworkload(self.configfiles)
         scanthr, rowthr = self.read_scanresults()
         logger.info('Scan throughput: {}'.format(scanthr))
         if self.test_config.stats_settings.enabled:
             self.reporter.post_to_sf(
                 round(scanthr, 1)
             )
+        #self.delete_spec(self.configfile)
 
 
 class SecondaryIndexingThroughputRebalanceTest(SecondaryIndexingThroughputTest):
