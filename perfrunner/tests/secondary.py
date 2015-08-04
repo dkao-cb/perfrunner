@@ -368,8 +368,8 @@ class _ScanWorkload(object):
                         "Id": i,
                         "Inclusion": 3,
                         "Index": index_name,
+                        "NInterval": 100
                     }
-
                     spec.update(string_extras)
                 else:
                     spec = {
@@ -379,6 +379,7 @@ class _ScanWorkload(object):
                         "Bucket": "bucket-1",
                         "Id": i,
                         "Index": index_name,
+                        "NInterval": 100
                     }
                 scan_specs.append(spec)
         result["ScanSpecs"] = scan_specs
@@ -401,10 +402,14 @@ class _ScanWorkload(object):
         logger.info('Initiating scan workload')
 
         procs = []
+        if len(configfiles) > 1:
+            raise RuntimeError("This implementation does not support multiple cbindexperfs")
         for i, (config, result) in enumerate(configfiles):
             # wrapped in a pair of unneeded parenthesis to silence flake8
-            cmdstr = (("ulimit -n 40960 ; ulimit -a ; cbindexperf{} -cluster {} -auth=\"{}:{}\" -configfile {}"
-                      " -resultfile {}").format(
+            cmdstr = ((
+                "ulimit -n 40960 ; ulimit -a ; cbindexperf{} -cluster {}"
+                " -auth=\"{}:{}\" -configfile {}" " -resultfile {} --statsfile"
+                " /root/statsfile").format(
                       i,
                       self.index_nodes[0], rest_username, rest_password,
                       config, result))
@@ -433,6 +438,9 @@ class SecondaryIndexingThroughputTest(SecondaryIndexTest, _ScanWorkload):
     The test applies scan workload against the 2i server and measures
     and reports the average scan throughput
     """
+
+    COLLECTORS = {'secondary_stats': True, 'secondary_latency': True, 'secondary_debugstats': True}
+
     def read_scanresults(self):
         sum_scansps = 0
         sum_rowps = 0
