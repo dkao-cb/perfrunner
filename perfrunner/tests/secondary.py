@@ -492,6 +492,10 @@ class SecondaryIndexingThroughputTest(SecondaryIndexTest, _ScanWorkload):
             self.reporter.post_to_sf(
                 round(scanthr, 1)
             )
+        if self.test_config.stats_settings.enabled:
+            self.reporter.post_to_sf(
+                *self.metric_helper.calc_secondaryscan_latency(percentile=80)
+            )
         #self.delete_spec(self.configfile)
 
 
