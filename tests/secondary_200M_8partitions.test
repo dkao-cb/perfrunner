@@ -22,10 +22,10 @@ workers = 20
 [secondary]
 name = myindex
 field = alt_email
-index_myindex_partitions={"alt_email":["3fffff", "7fffff", "bfffff"]}
+index_myindex_partitions={"alt_email":["1fffff", "3fffff", "5fffff", "7fffff", "9fffff", "bfffff", "dfffff"]}
 
 [access]
 creates = 100
-ops = 20000000
+ops = 180000000
 items = 20000000
 workers = 20
