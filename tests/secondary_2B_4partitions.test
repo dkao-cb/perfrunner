@@ -27,5 +27,5 @@ index_myindex_partitions={"alt_email":["3fffff", "7fffff", "bfffff"]}
 [access]
 creates = 100
 ops = 10000000
-items = 200000000
+items = 2000000000
 workers = 20
