@@ -91,8 +91,10 @@ class RemoteWorkerManager(object):
 
                 run('mkdir {}'.format(temp_dir))
                 with cd(temp_dir):
+                    REPO="https://github.com/dkao-cb/perfrunner.git"
                     run('git clone {}'.format(REPO))
                 with cd('{}/perfrunner'.format(temp_dir)):
+                    run('git checkout dkao_celery')
                     run('virtualenv -p python2.7 env')
                     run('PATH=/usr/lib/ccache:/usr/lib64/ccache/bin:$PATH '
                         'env/bin/pip install '
